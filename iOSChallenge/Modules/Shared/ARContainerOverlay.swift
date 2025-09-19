@@ -64,7 +64,6 @@ struct ARContainerOverlay<ARContent: UIViewRepresentable>: View {
          self.sessionProvider = sessionProvider
          self.delayCondition = delayCondition
      }
-    }
 
     /** Constructs the layered AR interface with coaching, status, and onboarding */
     var body: some View {
