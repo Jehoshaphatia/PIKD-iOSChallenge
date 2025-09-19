@@ -1,0 +1,11 @@
+{
+  "locations": {
+    "beccasBeautyBar": { "latitude": 6.356913911104207, "longitude": 2.400707146363209, "altitude": 1 },
+    "sanFrancisco": { "latitude": 37.7749, "longitude": -122.4194, "altitude": 0 },
+    "stanford": { "latitude": 37.4275, "longitude": -122.1697, "altitude": 0 }
+  },
+  "defaults": {
+    "altitude": 0
+  }
+}
+
