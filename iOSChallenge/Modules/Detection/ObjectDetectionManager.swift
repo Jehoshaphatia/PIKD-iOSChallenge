@@ -170,41 +170,36 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         currentCamera = frame.camera
         
+        // Only capture new buffer if we're not currently processing and don't have a pending buffer
         if !isProcessingFrame && currentBuffer == nil {
+            // CVPixelBuffer is automatically memory managed in Swift - no manual retain needed
             currentBuffer = frame.capturedImage
-        } else {
-            currentBuffer = nil
         }
     }
     
     // MARK: - Detection Tick
     /// Processes the most recent captured frame and schedules detection.
     private func runDetectionTick() {
-        guard let pixelBuffer = currentBuffer,
+        guard let bufferToProcess = currentBuffer,
               let camera = currentCamera,
               !isProcessingFrame else { 
-            currentBuffer = nil
             return 
         }
         
         cleanupExpiredEntities()
         
         isProcessingFrame = true
-        let bufferToProcess = currentBuffer
-        currentBuffer = nil
-        
-        guard let safeBuffer = bufferToProcess else {
-            isProcessingFrame = false
-            return
-        }
+        currentBuffer = nil // Clear immediately to allow new frames
         
         let orientation = CGImagePropertyOrientation.init(UIDevice.current.orientation)
         
-        detectObjects(in: safeBuffer, orientation: orientation) { [weak self] results in
-            guard let self = self else { return }
+        detectObjects(in: bufferToProcess, orientation: orientation) { [weak self] results in
+            guard let self = self else { 
+                return 
+            }
             
+            // CVPixelBuffer is automatically memory managed - no manual release needed
             self.isProcessingFrame = false
-            self.currentBuffer = nil
             
             guard let best = results.max(by: { $0.confidence < $1.confidence }),
                   best.confidence > baseConfidenceThreshold else {
@@ -251,6 +246,14 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
                 return 
             }
             
+            if let error = error {
+                print("Vision request error: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    completion([])
+                }
+                return
+            }
+            
             let results = (request.results as? [VNRecognizedObjectObservation]) ?? []
             let mapped = results.compactMap { obs -> DetectionResult? in
                 guard let top = obs.labels.first else { return nil }
@@ -264,13 +267,16 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
             }
         }
         
+        // Configure request for optimal performance
         request.imageCropAndScaleOption = .scaleFill
+        // Note: usesCPUOnly was deprecated in iOS 17.0 - Neural Engine usage is handled automatically
         
         visionQueue.async {
             let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation)
             do {
                 try handler.perform([request])
             } catch {
+                print("Vision handler error: \(error.localizedDescription)")
                 DispatchQueue.main.async {
                     completion([])
                 }
@@ -408,13 +414,15 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
                 if let entity = modelCache[detection.label.lowercased()]?.clone(recursive: true) {
                     entity.name = detection.label
                     
+                    // Configure physics and collision properly
                     if let modelEntity = entity.findFirstModelEntity() {
-                        entity.ensureAllModelEntitiesHaveCollision()
-                        
-                        PhysicsManager.addPhysics(to: modelEntity)
-                        
+                        // Generate collision shapes first, before adding physics
                         modelEntity.generateCollisionShapes(recursive: true)
                         
+                        // Add physics through PhysicsManager (which should handle both collision and physics components)
+                        PhysicsManager.addPhysics(to: modelEntity)
+                        
+                        // Only add collision component if PhysicsManager didn't already add one
                         if entity.components[CollisionComponent.self] == nil {
                             let bounds = entity.visualBounds(relativeTo: nil)
                             let size = bounds.extents
@@ -428,22 +436,27 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
                             )
                         }
                     } else {
+                        // For entities without ModelEntity, add basic collision
                         entity.components[CollisionComponent.self] = CollisionComponent(
                             shapes: [.generateBox(size: [0.1, 0.1, 0.1])]
                         )
                     }
                     
+                    // Add to gesture management
                     centralGestureManager?.addEntity(entity)
                     
+                    // Add to scene
                     anchor.addChild(entity)
                     arView.scene.addAnchor(anchor)
                     
+                    // Track the entity
                     let labelKey = detection.label.lowercased()
                     spawnedEntities[labelKey] = entity
                     entitySpawnHistory[labelKey] = now
                     spawnedAnchors.append(anchor)
                     cleanupOldObjects()
                     
+                    // Start animation if available
                     if let animation = entity.availableAnimations.first {
                         entity.playAnimation(animation.repeat())
                     }
@@ -453,26 +466,31 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
                     lastSpawnPosition = hitPosition
                     print("Spawned \(detection.label) at \(String(format: "%.1f", hitPosition.x)), \(String(format: "%.1f", hitPosition.y)), \(String(format: "%.1f", hitPosition.z))")
                 } else {
+                    // Create fallback sphere with proper physics setup
                     let sphere = ModelEntity(
                         mesh: .generateSphere(radius: 0.1),
                         materials: [SimpleMaterial(color: .blue, isMetallic: false)]
                     )
                     sphere.name = detection.label
                     
+                    // Add proper physics components
                     sphere.components[PhysicsBodyComponent.self] = PhysicsBodyComponent(
                         massProperties: .default,
                         material: .default,
-                        mode: .kinematic
+                        mode: .dynamic // Changed from kinematic to dynamic for better interaction
                     )
                     sphere.components[CollisionComponent.self] = CollisionComponent(
                         shapes: [.generateSphere(radius: 0.1)]
                     )
                     
+                    // Add to gesture management
                     centralGestureManager?.addEntity(sphere)
                     
+                    // Add to scene
                     anchor.addChild(sphere)
                     arView.scene.addAnchor(anchor)
                     
+                    // Track the entity
                     let labelKey = detection.label.lowercased()
                     spawnedEntities[labelKey] = sphere
                     entitySpawnHistory[labelKey] = now
