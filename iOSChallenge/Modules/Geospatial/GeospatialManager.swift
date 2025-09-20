@@ -53,10 +53,19 @@ final class GeospatialManager: NSObject, ObservableObject, ARSessionDelegate, CL
     @Published var trackingStatus: String = "Initializing…"
     @Published var inFallback: Bool = false
     @Published private(set) var availabilityResolved: Bool = false
+    @Published var gpsAccuracy: CLLocationAccuracy = -1
+    @Published var estimatedPositioningError: String = ""
+    @Published var showManualAdjustment: Bool = false
+    @Published var manualOffset: SIMD3<Float> = SIMD3<Float>(0, 0, 0)
 
     // Tuning for world-tracking fallback
-    private let minSpawnDistance: CLLocationDistance = 1.5     // avoid zero-distance spawn
-    private let maxSpawnDistance: CLLocationDistance = 30.0    // keep within a comfortable AR range
+    private let minSpawnDistance: CLLocationDistance = 1.5     // avoid zero-distance spawn (only when user is at exact target location)
+    
+    // GPS accuracy improvements
+    private var lastKnownAccurateLocation: CLLocation?
+    private var gpsAccuracyThreshold: CLLocationAccuracy = 10.0 // Only use GPS readings within 10m accuracy
+    private var locationUpdateCount = 0
+    private let minLocationUpdates = 3 // Require multiple GPS readings for better accuracy
 
     /** Initializes AR session with VPS when available, falling back to world tracking.
         - Parameter view: The `ARView` for rendering and session management
@@ -238,23 +247,35 @@ final class GeospatialManager: NSObject, ObservableObject, ARSessionDelegate, CL
             return
         }
 
+        // Calculate actual distance to target
+        let actualDistance = userLocation.distance(from: coordinate)
+        print("Distance to target: \(String(format: "%.1f", actualDistance))m")
+        print("User location: \(userLocation.latitude), \(userLocation.longitude)")
+        print("Target location: \(coordinate.latitude), \(coordinate.longitude)")
+
         // Compute relative AR position from user to target
         var worldPos = coordinate.toARPosition(from: userLocation, heading: deviceHeading)
-        var planar = hypot(Double(worldPos.x), Double(worldPos.z))
-
-        // If we’re effectively at the target (distance ~ 0), push it slightly forward
+        
+        // Apply manual offset if user has adjusted position
+        worldPos += manualOffset
+        
+        let planar = hypot(Double(worldPos.x), Double(worldPos.z))
+        
+        // Only handle the case where we're too close to the target (distance ~ 0)
+        // This prevents the soldier from spawning inside the user
         if planar < minSpawnDistance {
             let cam = arView.cameraTransform
             let fwd = simd_normalize(SIMD3<Float>(-cam.matrix.columns.2.x,
                                                   -cam.matrix.columns.2.y,
                                                   -cam.matrix.columns.2.z))
             worldPos = cam.translation + fwd * Float(minSpawnDistance)
-        } else if planar > maxSpawnDistance {
-            // Clamp to a reasonable draw distance in world-tracking
-            let dir = simd_normalize(SIMD3<Float>(worldPos.x, 0, worldPos.z))
-            worldPos = dir * Float(maxSpawnDistance)
-            planar = Double(maxSpawnDistance)
+            print("Target too close (\(String(format: "%.1f", planar))m), placing \(minSpawnDistance)m in front of camera")
+        } else {
+            print("Placing soldier at calculated GPS position: \(String(format: "%.1f", planar))m away")
         }
+        
+        // REMOVED: Distance clamping for far targets - this was preventing proper GPS positioning
+        // The soldier should be placed at the exact GPS coordinates regardless of distance
 
         // Clear any prior GPS soldier
         for anchor in arView.scene.anchors {
@@ -361,9 +382,33 @@ final class GeospatialManager: NSObject, ObservableObject, ARSessionDelegate, CL
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let loc = locations.last else { return }
+        
+        // Only use GPS readings with good accuracy
+        guard loc.horizontalAccuracy <= gpsAccuracyThreshold && loc.horizontalAccuracy > 0 else {
+            print("GPS accuracy too low: \(loc.horizontalAccuracy)m, waiting for better signal...")
+            return
+        }
+        
+        locationUpdateCount += 1
         currentUserLocation = loc.coordinate
-        // If we were waiting for a fix, try to place now
-        attemptDeferredPlacement()
+        
+        // Store the most accurate location we've received
+        if lastKnownAccurateLocation == nil || loc.horizontalAccuracy < lastKnownAccurateLocation!.horizontalAccuracy {
+            lastKnownAccurateLocation = loc
+        }
+        
+        print("GPS Update #\(locationUpdateCount): Accuracy: \(String(format: "%.1f", loc.horizontalAccuracy))m, Location: \(loc.coordinate.latitude), \(loc.coordinate.longitude)")
+        
+        // Update UI with accuracy information
+        DispatchQueue.main.async {
+            self.gpsAccuracy = loc.horizontalAccuracy
+            self.updatePositioningErrorEstimate()
+        }
+        
+        // If we were waiting for a fix, try to place now (but only after multiple good readings)
+        if locationUpdateCount >= minLocationUpdates {
+            attemptDeferredPlacement()
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
@@ -433,6 +478,96 @@ final class GeospatialManager: NSObject, ObservableObject, ARSessionDelegate, CL
     
     private func recordDirectionsRequest() {
         lastDirectionsRequest = Date()
+    }
+    
+    // MARK: - GPS Accuracy Estimation
+    
+    private func updatePositioningErrorEstimate() {
+        if inFallback {
+            if gpsAccuracy > 0 {
+                let estimatedError = gpsAccuracy * 1.5 // Conservative estimate: GPS error + AR tracking error
+                estimatedPositioningError = "GPS positioning: ±\(String(format: "%.0f", estimatedError))m accuracy"
+            } else {
+                estimatedPositioningError = "GPS positioning: Waiting for signal..."
+            }
+        } else {
+            estimatedPositioningError = "VPS positioning: Sub-meter accuracy"
+        }
+    }
+    
+    // MARK: - Location Utilities
+    
+    /// Creates a test location near the user's current position for testing purposes
+    func createNearbyTestLocation(offsetMeters: Double = 50) -> CLLocationCoordinate2D? {
+        guard let userLocation = currentUserLocation else {
+            print("Cannot create test location: no user location available")
+            return nil
+        }
+        
+        // Create a location 50 meters north of current position
+        let offsetLatitude = offsetMeters / 111000.0 // Rough conversion: 1 degree ≈ 111km
+        let testLocation = CLLocationCoordinate2D(
+            latitude: userLocation.latitude + offsetLatitude,
+            longitude: userLocation.longitude
+        )
+        
+        print("Created test location \(offsetMeters)m north of current position:")
+        print("Current: \(userLocation.latitude), \(userLocation.longitude)")
+        print("Test: \(testLocation.latitude), \(testLocation.longitude)")
+        
+        return testLocation
+    }
+    
+    /// Places soldier at a nearby test location for development/testing
+    func placeSoldierAtNearbyTestLocation() {
+        guard let testLocation = createNearbyTestLocation() else { return }
+        placeSoldierAt(lat: testLocation.latitude, lon: testLocation.longitude)
+    }
+    
+    // MARK: - Manual Position Adjustment
+    
+    /// Allows user to manually adjust the soldier's position for better accuracy
+    func adjustSoldierPosition(offset: SIMD3<Float>) {
+        manualOffset += offset
+        
+        // If soldier is already placed, update its position
+        if soldierPlaced, let coordinate = targetCoordinate {
+            // Remove current soldier
+            for anchor in arView.scene.anchors {
+                if anchor.children.contains(where: { $0.name == "GPSSoldier" }) {
+                    arView.scene.removeAnchor(anchor)
+                }
+            }
+            soldierPlaced = false
+            
+            // Re-place with new offset
+            if inFallback {
+                placeSoldierUsingGPS(at: coordinate)
+            }
+        }
+        
+        print("Manual adjustment applied: \(offset), total offset: \(manualOffset)")
+    }
+    
+    /// Resets manual position adjustments
+    func resetManualAdjustment() {
+        manualOffset = SIMD3<Float>(0, 0, 0)
+        
+        // Re-place soldier with original position
+        if soldierPlaced, let coordinate = targetCoordinate {
+            for anchor in arView.scene.anchors {
+                if anchor.children.contains(where: { $0.name == "GPSSoldier" }) {
+                    arView.scene.removeAnchor(anchor)
+                }
+            }
+            soldierPlaced = false
+            
+            if inFallback {
+                placeSoldierUsingGPS(at: coordinate)
+            }
+        }
+        
+        print("Manual adjustment reset")
     }
     
     /// Prints performance information about the scene

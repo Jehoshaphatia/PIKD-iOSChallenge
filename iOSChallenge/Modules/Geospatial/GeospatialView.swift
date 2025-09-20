@@ -36,14 +36,26 @@ struct GeospatialView: View {
             sessionProvider: { manager.getARSession() }
         )
         .overlay(alignment: .top) {
-            if manager.inFallback {
-                Text("Running in World Tracking (VPS unavailable here). Navigation may be limited.")
-                    .font(.caption)
-                    .padding(8)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(8)
-                    .padding(.top, 60)
+            VStack(spacing: 4) {
+                if manager.inFallback {
+                    Text("Running in World Tracking (VPS unavailable here). Navigation may be limited.")
+                        .font(.caption)
+                        .padding(8)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(8)
+                }
+                
+                if !manager.estimatedPositioningError.isEmpty {
+                    Text(manager.estimatedPositioningError)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(6)
+                }
             }
+            .padding(.top, 60)
         }
                 .alert(manager.inFallback ? "World Tracking Mode" : "Geotracking unavailable",
                isPresented: $manager.showAlert) {
@@ -61,13 +73,18 @@ struct GeospatialView: View {
         .overlay(alignment: .bottomTrailing) {
             debugMenu
         }
+        .overlay(alignment: .bottomLeading) {
+            if manager.showManualAdjustment && manager.inFallback {
+                manualAdjustmentControls
+            }
+        }
         #endif
     }
     
     #if DEBUG
     @ViewBuilder
     private var debugMenu: some View {
-        VStack {
+        VStack(spacing: 8) {
             Button(action: {
                 manager.printSceneHierarchy()
             }) {
@@ -87,9 +104,117 @@ struct GeospatialView: View {
                     .background(Color.black.opacity(0.6))
                     .clipShape(Circle())
             }
+            
+            if manager.inFallback {
+                Button(action: {
+                    manager.showManualAdjustment.toggle()
+                }) {
+                    Image(systemName: "slider.horizontal.3")
+                        .foregroundColor(.white)
+                        .padding(8)
+                        .background(Color.black.opacity(0.6))
+                        .clipShape(Circle())
+                }
+                
+                Button(action: {
+                    manager.placeSoldierAtNearbyTestLocation()
+                }) {
+                    Image(systemName: "location.circle")
+                        .foregroundColor(.white)
+                        .padding(8)
+                        .background(Color.black.opacity(0.6))
+                        .clipShape(Circle())
+                }
+            }
         }
         .padding(.bottom, 100)
         .padding(.trailing, 20)
+    }
+    
+    @ViewBuilder
+    private var manualAdjustmentControls: some View {
+        VStack(spacing: 8) {
+            Text("Manual Position Adjustment")
+                .font(.caption)
+                .foregroundColor(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.black.opacity(0.6))
+                .cornerRadius(6)
+            
+            HStack(spacing: 8) {
+                // Forward/Backward
+                VStack(spacing: 4) {
+                    Button("↑") {
+                        manager.adjustSoldierPosition(offset: SIMD3<Float>(0, 0, -0.5))
+                    }
+                    .foregroundColor(.white)
+                    .frame(width: 30, height: 30)
+                    .background(Color.blue.opacity(0.7))
+                    .cornerRadius(4)
+                    
+                    Button("↓") {
+                        manager.adjustSoldierPosition(offset: SIMD3<Float>(0, 0, 0.5))
+                    }
+                    .foregroundColor(.white)
+                    .frame(width: 30, height: 30)
+                    .background(Color.blue.opacity(0.7))
+                    .cornerRadius(4)
+                }
+                
+                // Left/Right
+                VStack(spacing: 4) {
+                    Button("←") {
+                        manager.adjustSoldierPosition(offset: SIMD3<Float>(-0.5, 0, 0))
+                    }
+                    .foregroundColor(.white)
+                    .frame(width: 30, height: 30)
+                    .background(Color.green.opacity(0.7))
+                    .cornerRadius(4)
+                    
+                    Button("→") {
+                        manager.adjustSoldierPosition(offset: SIMD3<Float>(0.5, 0, 0))
+                    }
+                    .foregroundColor(.white)
+                    .frame(width: 30, height: 30)
+                    .background(Color.green.opacity(0.7))
+                    .cornerRadius(4)
+                }
+                
+                // Up/Down
+                VStack(spacing: 4) {
+                    Button("↗") {
+                        manager.adjustSoldierPosition(offset: SIMD3<Float>(0, 0.5, 0))
+                    }
+                    .foregroundColor(.white)
+                    .frame(width: 30, height: 30)
+                    .background(Color.orange.opacity(0.7))
+                    .cornerRadius(4)
+                    
+                    Button("↘") {
+                        manager.adjustSoldierPosition(offset: SIMD3<Float>(0, -0.5, 0))
+                    }
+                    .foregroundColor(.white)
+                    .frame(width: 30, height: 30)
+                    .background(Color.orange.opacity(0.7))
+                    .cornerRadius(4)
+                }
+            }
+            
+            Button("Reset") {
+                manager.resetManualAdjustment()
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color.red.opacity(0.7))
+            .cornerRadius(6)
+        }
+        .padding(8)
+        .background(Color.black.opacity(0.6))
+        .cornerRadius(8)
+        .padding(.bottom, 100)
+        .padding(.leading, 20)
     }
     #endif
 }
