@@ -69,7 +69,51 @@ struct DetectionView: View {
             print("DetectionView disappeared - stopping detection timer")
             manager.stopDetectionTimer()
         }
+        #if DEBUG
+        .overlay(alignment: .bottomTrailing) {
+            debugMenu
+        }
+        #endif
     }
+    
+    #if DEBUG
+    @ViewBuilder
+    private var debugMenu: some View {
+        VStack {
+            Button(action: {
+                manager.printSceneHierarchy()
+            }) {
+                Image(systemName: "tree")
+                    .foregroundColor(.white)
+                    .padding(8)
+                    .background(Color.black.opacity(0.6))
+                    .clipShape(Circle())
+            }
+            
+            Button(action: {
+                manager.printPerformanceInfo()
+            }) {
+                Image(systemName: "speedometer")
+                    .foregroundColor(.white)
+                    .padding(8)
+                    .background(Color.black.opacity(0.6))
+                    .clipShape(Circle())
+            }
+            
+            Button(action: {
+                manager.printDetectionStats()
+            }) {
+                Image(systemName: "chart.bar")
+                    .foregroundColor(.white)
+                    .padding(8)
+                    .background(Color.black.opacity(0.6))
+                    .clipShape(Circle())
+            }
+        }
+        .padding(.bottom, 100)
+        .padding(.trailing, 20)
+    }
+    #endif
 }
 
 /**

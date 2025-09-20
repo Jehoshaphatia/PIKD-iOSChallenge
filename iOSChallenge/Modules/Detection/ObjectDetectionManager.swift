@@ -465,6 +465,11 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
                     lastSpawnedLabel = detection.label
                     lastSpawnPosition = hitPosition
                     print("Spawned \(detection.label) at \(String(format: "%.1f", hitPosition.x)), \(String(format: "%.1f", hitPosition.y)), \(String(format: "%.1f", hitPosition.z))")
+                    
+                    // Debug: Print entity hierarchy after spawning (only in debug builds)
+                    #if DEBUG
+                    entity.printHierarchy()
+                    #endif
                 } else {
                     // Create fallback sphere with proper physics setup
                     let sphere = ModelEntity(
@@ -529,30 +534,6 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
         spawnedAnchors = Array(spawnedAnchors.dropFirst(objectsToRemove))
         
         print("Cleaned up old objects from scene")
-    }
-    
-    // MARK: - Debug Helper
-    /**
-    Prints the entity hierarchy for debugging, including basic component flags.
-    - Parameters:
-      - entity: The root entity to print.
-      - depth: The initial indentation depth.
-    */
-    private func debugPrintEntityHierarchy(_ entity: Entity, depth: Int) {
-        let indent = String(repeating: "  ", count: depth)
-        let hasCollision = entity.components[CollisionComponent.self] != nil
-        let hasPhysics = entity.components[PhysicsBodyComponent.self] != nil
-        let isModelEntity = entity is ModelEntity
-        
-        print("\(indent)├─ \(entity.name.isEmpty ? "<unnamed>" : entity.name) " +
-              "[\(type(of: entity))] " +
-              "\(isModelEntity ? "[MODEL]" : "") " +
-              "\(hasCollision ? "[COLLISION]" : "") " +
-              "\(hasPhysics ? "[PHYSICS]" : "")")
-        
-        for child in entity.children {
-            debugPrintEntityHierarchy(child, depth: depth + 1)
-        }
     }
     
     // MARK: - Preload Models (async/await, iOS 15+)
@@ -651,6 +632,120 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
         
         modelCache.removeAll()
     }
+    
+    // MARK: - Debug Methods
+    #if DEBUG
+    /// Prints the complete scene hierarchy for debugging
+    func printSceneHierarchy() {
+        guard let arView = arView else {
+            print("ARView not available for hierarchy debugging")
+            return
+        }
+        
+        print("\n === DETECTION SCENE HIERARCHY ===")
+        print("AR Scene Overview:")
+        
+        if arView.scene.anchors.isEmpty {
+            print("No anchors in scene")
+        } else {
+            for (index, anchor) in arView.scene.anchors.enumerated() {
+                print("\nAnchor \(index + 1)/\(arView.scene.anchors.count):")
+                anchor.printHierarchy()
+            }
+        }
+        
+        // Show spawned entities information
+        if spawnedEntities.isEmpty {
+            print("\n No spawned entities tracked")
+        } else {
+            print("\n Spawned Entities Summary:")
+            for (label, entity) in spawnedEntities {
+                print("\(label): \(entity.name) [\(type(of: entity))]")
+            }
+        }
+        
+        print("=== END HIERARCHY ===\n")
+    }
+    
+    /// Prints performance information about the scene
+    func printPerformanceInfo() {
+        guard let arView = arView else {
+            print("ARView not available for performance debugging")
+            return
+        }
+        
+        print("\n === DETECTION PERFORMANCE INFO ===")
+        
+        // Overall scene stats
+        let anchorCount = arView.scene.anchors.count
+        let entityCount = spawnedEntities.count
+        print("Total Anchors: \(anchorCount)")
+        print("Tracked Entities: \(entityCount)")
+        print("Max Objects Limit: \(maxObjectsInScene)")
+        
+        // Analyze each anchor
+        for anchor in arView.scene.anchors {
+            print("\n Anchor Performance Analysis:")
+            anchor.printPerformanceInfo()
+        }
+        
+        // Model cache information
+        print("\n Model Cache:")
+        print("  Cached Models: \(modelCache.count)")
+        for (label, _) in modelCache {
+            print("    - \(label)")
+        }
+        
+        // AR session information
+        let session = arView.session
+        print("\n AR Session Status:")
+        print("  Tracking State: \(session.currentFrame?.camera.trackingState.description ?? "Unknown")")
+        print("  Configuration: \(type(of: session.configuration))")
+        
+        print("=== END PERFORMANCE INFO ===\n")
+    }
+    
+    /// Prints detection-specific statistics
+    func printDetectionStats() {
+        print("\n === DETECTION STATISTICS ===")
+        
+        // Detection state
+        print("Detection Status: \(detectionStatus)")
+        print("Detection Running: \(isDetectionRunning)")
+        print("Detection Timer: \(detectionTimer != nil ? "Active" : "Inactive")")
+        
+        // Spawn history
+        print("\nEntity Spawn History:")
+        if entitySpawnHistory.isEmpty {
+            print("  No spawn history")
+        } else {
+            let now = Date()
+            for (label, spawnTime) in entitySpawnHistory {
+                let elapsed = now.timeIntervalSince(spawnTime)
+                print("\(label): \(String(format: "%.1f", elapsed))s ago")
+            }
+        }
+        
+        // Cooldown status
+        let timeSinceLastSpawn = Date().timeIntervalSince(lastSpawnTime)
+        print("\nSpawn Cooldown:")
+        print("  Time since last spawn: \(String(format: "%.1f", timeSinceLastSpawn))s")
+        print("  Cooldown period: \(spawnCooldown)s")
+        print("  Can spawn: \(timeSinceLastSpawn >= spawnCooldown)")
+        
+        if !lastSpawnedLabel.isEmpty {
+            print("  Last spawned: \(lastSpawnedLabel)")
+        }
+        
+        // Scene limits
+        print("\n Scene Management:")
+        print("  Current objects: \(spawnedAnchors.count)")
+        print("  Maximum objects: \(maxObjectsInScene)")
+        print("  Cleanup needed: \(spawnedAnchors.count > maxObjectsInScene)")
+        
+        print("=== END DETECTION STATS ===\n")
+    }
+    #endif
     
     deinit {
         cleanup()

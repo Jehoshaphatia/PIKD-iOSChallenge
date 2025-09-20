@@ -247,6 +247,12 @@ final class GeospatialManager: NSObject, ObservableObject, ARSessionDelegate, CL
             self.characterController = CharacterController(arView: arView, character: soldier)
             soldierPlaced = true
             print("Placed soldier (GPS fallback) at ~\(Int(planar))m relative distance.")
+            
+            // Debug: Print scene hierarchy after GPS soldier placement
+            #if DEBUG
+            print("GPS Soldier placed - Scene hierarchy:")
+            anchorEntity.printHierarchy()
+            #endif
         } else {
             // Fallback sphere
             let sphere = ModelEntity(
@@ -278,6 +284,12 @@ final class GeospatialManager: NSObject, ObservableObject, ARSessionDelegate, CL
                 arView.scene.addAnchor(anchorEntity)
                 self.characterController = CharacterController(arView: arView, character: soldier)
                 soldierPlaced = true
+                
+                // Debug: Print scene hierarchy after VPS soldier placement
+                #if DEBUG
+                print(" VPS Soldier placed - Scene hierarchy:")
+                anchorEntity.printHierarchy()
+                #endif
             } else {
                 let sphere = ModelEntity(mesh: .generateSphere(radius: 0.1),
                                          materials: [SimpleMaterial(color: .red, isMetallic: false)])
@@ -334,4 +346,75 @@ final class GeospatialManager: NSObject, ObservableObject, ARSessionDelegate, CL
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         print("Location manager failed with error: \(error)")
     }
+    
+    // MARK: - Debug Methods
+    #if DEBUG
+    /// Prints the complete scene hierarchy for debugging
+    func printSceneHierarchy() {
+        guard let arView = arView else {
+            print("ARView not available for hierarchy debugging")
+            return
+        }
+        
+        print("\n === GEOSPATIAL SCENE HIERARCHY ===")
+        print("AR Scene Overview:")
+        
+        if arView.scene.anchors.isEmpty {
+            print("No anchors in scene")
+        } else {
+            for (index, anchor) in arView.scene.anchors.enumerated() {
+                print("\n Anchor \(index + 1)/\(arView.scene.anchors.count):")
+                anchor.printHierarchy()
+            }
+        }
+        
+        // Show soldier-specific information
+        if let soldier = arView.scene.findEntity(named: "GPSSoldier") {
+            print("\n Found GPS Soldier:")
+            soldier.printHierarchy(showComponents: true)
+        } else {
+            print("\n GPS Soldier not found in scene")
+        }
+        
+        print("=== END HIERARCHY ===\n")
+    }
+    
+    /// Prints performance information about the scene
+    func printPerformanceInfo() {
+        guard let arView = arView else {
+            print(" ARView not available for performance debugging")
+            return
+        }
+        
+        print("\n === GEOSPATIAL PERFORMANCE INFO ===")
+        
+        // Overall scene stats
+        let anchorCount = arView.scene.anchors.count
+        print("Total Anchors: \(anchorCount)")
+        
+        // Analyze each anchor
+        for anchor in arView.scene.anchors {
+            print("\n Anchor Performance Analysis:")
+            anchor.printPerformanceInfo()
+        }
+        
+        // AR session information
+        let session = arView.session
+        print("\n AR Session Status:")
+        print("  Tracking State: \(session.currentFrame?.camera.trackingState.description ?? "Unknown")")
+        print("  Configuration: \(type(of: session.configuration))")
+        
+        // Location information
+        if let location = currentUserLocation {
+            print("\n Location Info:")
+            print("  Current Location: \(location.latitude), \(location.longitude)")
+            print("  Heading: \(String(format: "%.1f", deviceHeading * 180.0 / .pi))°")
+            if let target = targetCoordinate {
+                print("  Target Location: \(target.latitude), \(target.longitude)")
+            }
+        }
+        
+        print("=== END PERFORMANCE INFO ===\n")
+    }
+    #endif
 }

@@ -45,20 +45,53 @@ struct GeospatialView: View {
                     .padding(.top, 60)
             }
         }
-        .alert(manager.inFallback ? "World Tracking Mode" : "Geotracking unavailable",
+                .alert(manager.inFallback ? "World Tracking Mode" : "Geotracking unavailable",
                isPresented: $manager.showAlert) {
             if manager.inFallback {
                 Button("Continue") {
-                    manager.userDidAcknowledgeAlert() // Notify manager that user acknowledged the alert
-                    manager.showAlert = false
+                    manager.userAcknowledged = true
                 }
             } else {
-                Button("Restart Session") { manager.restartSession() } // Restart AR session
+                Button("OK") { }
             }
         } message: {
-            Text(manager.alertMessage) // Display alert message
+            Text(manager.alertMessage)
         }
+        #if DEBUG
+        .overlay(alignment: .bottomTrailing) {
+            debugMenu
+        }
+        #endif
     }
+    
+    #if DEBUG
+    @ViewBuilder
+    private var debugMenu: some View {
+        VStack {
+            Button(action: {
+                manager.printSceneHierarchy()
+            }) {
+                Image(systemName: "tree")
+                    .foregroundColor(.white)
+                    .padding(8)
+                    .background(Color.black.opacity(0.6))
+                    .clipShape(Circle())
+            }
+            
+            Button(action: {
+                manager.printPerformanceInfo()
+            }) {
+                Image(systemName: "speedometer")
+                    .foregroundColor(.white)
+                    .padding(8)
+                    .background(Color.black.opacity(0.6))
+                    .clipShape(Circle())
+            }
+        }
+        .padding(.bottom, 100)
+        .padding(.trailing, 20)
+    }
+    #endif
 }
 
 /** 
