@@ -65,7 +65,7 @@ extension Entity {
         }
         
         if !componentFlags.isEmpty {
-            print("\(indent)🔧 Components: \(componentFlags.joined(separator: ", "))")
+            print("\(indent) Components: \(componentFlags.joined(separator: ", "))")
         }
         
         // Show position for entities with transforms
@@ -136,10 +136,10 @@ extension Entity {
                                modelEntityCount: &modelEntityCount, 
                                animationCount: &animationCount)
         
-        print("📊 Performance Summary:")
-        print("  Total Entities: \(entityCount)")
-        print("  Model Entities: \(modelEntityCount)")
-        print("  Total Animations: \(animationCount)")
+        print("Performance Summary:")
+        print("Total Entities: \(entityCount)")
+        print("Model Entities: \(modelEntityCount)")
+        print("Total Animations: \(animationCount)")
     }
     
     /**

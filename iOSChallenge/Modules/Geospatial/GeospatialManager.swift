@@ -27,12 +27,17 @@ final class GeospatialManager: NSObject, ObservableObject, ARSessionDelegate, CL
     private var characterController: CharacterController?
 
     private var navigationManager = NavigationManager()
+    private var performanceManager = PerformanceManager.shared
     private var cancellables = Set<AnyCancellable>()
     @Published var navigationStatus: String = "Navigation: Idle"
 
     private var locationManager = CLLocationManager()
     private var currentUserLocation: CLLocationCoordinate2D?
     private var deviceHeading: Double = 0
+
+    // API rate limiting properties
+    private var lastDirectionsRequest = Date.distantPast
+    private let directionsRequestCooldown: TimeInterval = 1.0 // 1 second between requests
 
     // Target coordinate (always set by placeSoldierAt)
     private var targetCoordinate: CLLocationCoordinate2D?
@@ -57,11 +62,26 @@ final class GeospatialManager: NSObject, ObservableObject, ARSessionDelegate, CL
         - Parameter view: The `ARView` for rendering and session management
     */
     func setupAR(in view: ARView) {
+        print("Setting up optimized geospatial AR...")
+        
         self.arView = view
-        availabilityResolved = false
+        DispatchQueue.main.async {
+            self.availabilityResolved = false
+        }
+
+        // Apply performance optimizations
+        performanceManager.optimizeARView(view)
 
         // Ensure a clean scene on each (re)setup to avoid leftover entities from a prior mode
         arView.clearAllAnchors()
+
+        // Set up memory management notifications
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleMemoryWarning),
+            name: .performanceManagerMemoryWarning,
+            object: nil
+        )
 
         locationManager.delegate = self
         locationManager.requestWhenInUseAuthorization()
@@ -76,15 +96,23 @@ final class GeospatialManager: NSObject, ObservableObject, ARSessionDelegate, CL
     // Prefer geospatial tracking when the device supports it; otherwise use world tracking.
     guard ARGeoTrackingConfiguration.isSupported else {
             DispatchQueue.main.async {
+                self.arView.clearAllAnchors()
+                // Update @Published properties on main thread
                 self.inFallback = true
                 self.alertMessage = "This device does not support AR GeoTracking. Falling back to World Tracking."
                 self.showAlert = true
                 self.userAcknowledged = false
                 self.availabilityResolved = true
-                self.arView.clearAllAnchors()
             }
             let fallback = ARWorldTrackingConfiguration()
             fallback.planeDetection = [.horizontal]
+            
+            // Optimize fallback configuration for performance
+            if performanceManager.performanceMetrics.isLowPowerMode {
+                fallback.planeDetection = []
+                print("Disabled plane detection for low power mode")
+            }
+            
             arView.session.delegate = self
             arView.session.run(fallback)
             return
@@ -379,10 +407,38 @@ final class GeospatialManager: NSObject, ObservableObject, ARSessionDelegate, CL
         print("=== END HIERARCHY ===\n")
     }
     
+    // MARK: - Memory Management
+    
+    @objc private func handleMemoryWarning() {
+        print("Memory warning in Geospatial Manager - performing cleanup...")
+        
+        // Clean up navigation requests
+        navigationManager.cancelCurrentNavigation()
+        
+        // Perform AR cleanup if available
+        if let arView = arView {
+            performanceManager.performMemoryCleanup(arView)
+        }
+        
+        print("Geospatial memory cleanup complete")
+    }
+    
+    // MARK: - Rate Limited API Calls
+    
+    private func canMakeDirectionsRequest() -> Bool {
+        let now = Date()
+        let timeSinceLastRequest = now.timeIntervalSince(lastDirectionsRequest)
+        return timeSinceLastRequest >= directionsRequestCooldown
+    }
+    
+    private func recordDirectionsRequest() {
+        lastDirectionsRequest = Date()
+    }
+    
     /// Prints performance information about the scene
     func printPerformanceInfo() {
         guard let arView = arView else {
-            print(" ARView not available for performance debugging")
+            print("ARView not available for performance debugging")
             return
         }
         

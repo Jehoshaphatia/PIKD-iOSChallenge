@@ -31,6 +31,10 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
     private var model: VNCoreMLModel?
     private var arView: ARView?
     
+    // MARK: - Performance Management
+    private let performanceManager = PerformanceManager.shared
+    private let sessionManager = ARSessionManager()
+    
     // MARK: - Published UI State
     /// High-level tracking status derived from ARKit camera state.
     @Published var trackingStatus: String = "Initializing…"
@@ -43,6 +47,8 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
     private var currentBuffer: CVPixelBuffer?
     private var currentCamera: ARCamera?
     private var isProcessingFrame: Bool = false
+    private var frameSkipCount: Int = 0
+    private let frameSkipThreshold: Int = 3 // Process every 3rd frame to reduce load
     
     // MARK: - Queues
     private let visionQueue = DispatchQueue(label: "com.objectdetection.visionQueue")
@@ -87,21 +93,56 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
     }
     
     // MARK: - Setup
-    /// Configures ARKit on the provided ARView and starts the detection timer.
-    /// - Parameter view: The ARView used for session management and rendering.
+    /// Sets up the AR session with optimized performance settings.
+    /// - Parameter view: The ARView for displaying AR content.
     func setupAR(in view: ARView) {
+        print("Setting up optimized AR for object detection...")
+        
         self.arView = view
+        
+        // Apply performance optimizations
+        performanceManager.optimizeARView(view)
         
         centralGestureManager = CentralGestureManager(arView: view)
         
+        // Configure session with proper management
+        sessionManager.configureSession(arView: view, preferVPS: false) { [weak self] success, error in
+            DispatchQueue.main.async {
+                if success {
+                    print("Object detection AR session configured successfully")
+                    self?.startDetectionTimer()
+                } else {
+                    print("Failed to configure AR session: \(error?.localizedDescription ?? "Unknown error")")
+                    self?.trackingStatus = "AR Setup Failed"
+                }
+            }
+        }
+        
+        // Set up memory management notifications
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleMemoryWarning),
+            name: .performanceManagerMemoryWarning,
+            object: nil
+        )
+        
+        // Legacy delegate setup for compatibility
+        view.session.delegate = self
+        
+        // Use optimized configuration
         let config = ARWorldTrackingConfiguration()
         config.environmentTexturing = .automatic
         config.planeDetection = [.horizontal, .vertical]
         
-        view.session.delegate = self
-        view.session.run(config)
+        // Reduce features if under resource constraints
+        if performanceManager.performanceMetrics.isLowPowerMode {
+            config.planeDetection = [.horizontal] // Reduce to horizontal only
+            config.environmentTexturing = .none
+            print("Reduced AR features for low power mode")
+        }
         
-        startDetectionTimer()
+        view.session.run(config)
+        print("Object detection AR setup complete")
     }
     
     /// Returns the configured ARView instance, if any.
@@ -168,12 +209,55 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
     }
     
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        // Implement frame skipping to reduce processing load
+        frameSkipCount += 1
+        if frameSkipCount < frameSkipThreshold {
+            return
+        }
+        frameSkipCount = 0
+        
         currentCamera = frame.camera
         
         // Only capture new buffer if we're not currently processing and don't have a pending buffer
         if !isProcessingFrame && currentBuffer == nil {
-            // CVPixelBuffer is automatically memory managed in Swift - no manual retain needed
-            currentBuffer = frame.capturedImage
+            // Use optimized frame management from session manager
+            if let optimizedFrame = sessionManager.getCurrentFrame() {
+                currentBuffer = optimizedFrame.capturedImage
+            }
+        }
+    }
+    
+    func session(_ session: ARSession, didFailWithError error: Error) {
+        print("Object Detection AR Session failed: \(error.localizedDescription)")
+        DispatchQueue.main.async {
+            self.trackingStatus = "Detection: Session Failed"
+        }
+    }
+    
+    // MARK: - Memory Management
+    
+    @objc private func handleMemoryWarning() {
+        print("Memory warning in Object Detection - performing cleanup...")
+        
+        // Stop detection temporarily
+        stopDetectionTimer()
+        
+        // Clear buffers
+        currentBuffer = nil
+        isProcessingFrame = false
+        
+        // Clean up tracking
+        spawnedEntities.removeAll()
+        spawnedAnchors.removeAll()
+        
+        // Perform AR cleanup if available
+        if let arView = arView {
+            performanceManager.performMemoryCleanup(arView)
+        }
+        
+        // Restart detection after cleanup
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            self.startDetectionTimer()
         }
     }
     
@@ -198,7 +282,7 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
                 return 
             }
             
-            // CVPixelBuffer is automatically memory managed - no manual release needed
+            
             self.isProcessingFrame = false
             
             guard let best = results.max(by: { $0.confidence < $1.confidence }),
@@ -269,7 +353,7 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
         
         // Configure request for optimal performance
         request.imageCropAndScaleOption = .scaleFill
-        // Note: usesCPUOnly was deprecated in iOS 17.0 - Neural Engine usage is handled automatically
+        
         
         visionQueue.async {
             let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation)
@@ -482,7 +566,7 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
                     sphere.components[PhysicsBodyComponent.self] = PhysicsBodyComponent(
                         massProperties: .default,
                         material: .default,
-                        mode: .dynamic // Changed from kinematic to dynamic for better interaction
+                        mode: .kinematic
                     )
                     sphere.components[CollisionComponent.self] = CollisionComponent(
                         shapes: [.generateSphere(radius: 0.1)]
@@ -544,18 +628,17 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
         return
         #else
         let mappings: [String: String] = [
-            "laptop": "hummingbird_anim.usdz",
+            "laptop": "ball_baseball_realistic.usdz",
             "person": "toy_drummer.usdz",
             "table": "ball_basketball_realistic.usdz",
             "dining table": "ball_soccerball_realistic.usdz",
-            "bottle": "ball_basketball_realistic.usdz",
+            "bottle": "hummingbird_anim.usdz",
             "book": "ball_basketball_realistic.usdz",
             "keyboard": "Straw.usdz",
             "mouse": "toy_biplane_realistic.usdz",
-            "cell phone": "Straw.usdz",
+            "cell phone": "ball_football_realistic.usdz",
             "tv": "ball_soccerball_realistic.usdz",
-            "cat": "toy_drummer.usdz",
-            "monitor": "ball_soccerball_realistic.usdz"
+            "monitor": "toy_biplane_realistic.usdz"
         ]
 
         Task {
@@ -589,10 +672,10 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
     */
     private func handleFailedModelLoad(label: String, originalFile: String) {
         let fallbackMappings: [String: String] = [
-            "tv": "toy_biplane_realistic.usdz",
+            "tv": "ball_soccerball_realistic.usdz",
             "monitor": "toy_biplane_realistic.usdz",
-            "laptop": "toy_drummer.usdz",
-            "cell phone": "ball_basketball_realistic.usdz",
+            "laptop": "ball_baseball_realistic.usdz",
+            "cell phone": "ball_football_realistic.usdz",
             "keyboard": "ball_basketball_realistic.usdz"
         ]
         
@@ -699,7 +782,7 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
         // AR session information
         let session = arView.session
         print("\n AR Session Status:")
-        print("  Tracking State: \(session.currentFrame?.camera.trackingState.description ?? "Unknown")")
+        print("Tracking State: \(session.currentFrame?.camera.trackingState.description ?? "Unknown")")
         print("  Configuration: \(type(of: session.configuration))")
         
         print("=== END PERFORMANCE INFO ===\n")
@@ -729,9 +812,9 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
         // Cooldown status
         let timeSinceLastSpawn = Date().timeIntervalSince(lastSpawnTime)
         print("\nSpawn Cooldown:")
-        print("  Time since last spawn: \(String(format: "%.1f", timeSinceLastSpawn))s")
-        print("  Cooldown period: \(spawnCooldown)s")
-        print("  Can spawn: \(timeSinceLastSpawn >= spawnCooldown)")
+        print("Time since last spawn: \(String(format: "%.1f", timeSinceLastSpawn))s")
+        print("Cooldown period: \(spawnCooldown)s")
+        print("Can spawn: \(timeSinceLastSpawn >= spawnCooldown)")
         
         if !lastSpawnedLabel.isEmpty {
             print("  Last spawned: \(lastSpawnedLabel)")
@@ -739,9 +822,9 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
         
         // Scene limits
         print("\n Scene Management:")
-        print("  Current objects: \(spawnedAnchors.count)")
-        print("  Maximum objects: \(maxObjectsInScene)")
-        print("  Cleanup needed: \(spawnedAnchors.count > maxObjectsInScene)")
+        print("Current objects: \(spawnedAnchors.count)")
+        print("Maximum objects: \(maxObjectsInScene)")
+        print("Cleanup needed: \(spawnedAnchors.count > maxObjectsInScene)")
         
         print("=== END DETECTION STATS ===\n")
     }

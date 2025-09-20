@@ -144,6 +144,13 @@ final class NavigationManager: NSObject, CLLocationManagerDelegate, ObservableOb
         }
     }
 
+    /** Cancels current navigation and clears all waypoints */
+    func cancelCurrentNavigation() {
+        target = nil
+        currentRoute = nil
+        statusMessage = "Navigation: Cancelled"
+        clearWaypoints()
+    }
 
     private func clearWaypoints() {
         for anchor in waypointAnchors {

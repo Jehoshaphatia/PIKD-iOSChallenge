@@ -32,13 +32,13 @@ enum GeoConfig {
     private static let config: GeoConfigData? = {
         guard let url = Bundle.main.url(forResource: "GeoConfig", withExtension: "json"),
               let data = try? Data(contentsOf: url) else {
-            print("⚠️ GeoConfig.json not found in bundle. Using fallback values.")
+            print("GeoConfig.json not found in bundle. Using fallback values.")
             return nil
         }
         do {
             return try JSONDecoder().decode(GeoConfigData.self, from: data)
         } catch {
-            print("⚠️ Failed to decode GeoConfig.json: \(error.localizedDescription). Using fallback values.")
+            print("Failed to decode GeoConfig.json: \(error.localizedDescription). Using fallback values.")
             return nil
         }
     }()
@@ -74,7 +74,7 @@ enum GeoConfig {
         if let altitude = config?.defaults.altitude {
             return altitude
         } else {
-            print("⚠️ Using fallback altitude: \(fallbackAltitude)")
+            print("Using fallback altitude: \(fallbackAltitude)")
             return fallbackAltitude
         }
     }
@@ -84,11 +84,11 @@ enum GeoConfig {
         if let location = config?.locations[key] {
             return location
         } else if let fallback = fallbackLocations[key] {
-            print("⚠️ Using fallback location for '\(key)': \(fallback.latitude), \(fallback.longitude)")
+            print("Using fallback location for '\(key)': \(fallback.latitude), \(fallback.longitude)")
             return fallback
         } else {
             // Graceful fallback: return neutral coordinate instead of crashing
-            print("❌ Missing both JSON and fallback value for location: \(key). Returning neutral (0,0,0).")
+            print("Missing both JSON and fallback value for location: \(key). Returning neutral (0,0,0).")
             return GeoLocation(latitude: 0, longitude: 0, altitude: 0)
         }
     }
