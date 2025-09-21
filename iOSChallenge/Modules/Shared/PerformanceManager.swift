@@ -104,8 +104,8 @@ final class PerformanceManager: NSObject, ObservableObject {
     
     private func configureDebugOptions(_ arView: ARView) {
         #if DEBUG
-        // Only enable essential debug info, not performance-heavy overlays
-        arView.debugOptions = [.showStatistics]
+        // Disable debug statistics overlay for cleaner UI
+        arView.debugOptions = []
         #else
         arView.debugOptions = []
         #endif

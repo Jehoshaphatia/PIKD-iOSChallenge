@@ -13,8 +13,8 @@ import RealityKit
 import SwiftUI
 
 /**
-A single object detection result produced by Vision.
-*/
+ A single object detection result produced by Vision.
+ */
 struct DetectionResult {
     /// The identifier of the detected object.
     let label: String
@@ -25,15 +25,14 @@ struct DetectionResult {
 }
 
 /**
-Manages real-time object detection and AR object placement.
-*/
+ Manages real-time object detection and AR object placement.
+ */
 final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegate {
     private var model: VNCoreMLModel?
     private var arView: ARView?
     
     // MARK: - Performance Management
     private let performanceManager = PerformanceManager.shared
-    private let sessionManager = ARSessionManager()
     
     // MARK: - Published UI State
     /// High-level tracking status derived from ARKit camera state.
@@ -45,7 +44,8 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
     
     // MARK: - Frame Buffers
     private var currentBuffer: CVPixelBuffer?
-    private var currentCamera: ARCamera?
+    private var lastCameraTransform: simd_float4x4?
+    private var lastIntrinsics: simd_float3x3?
     private var isProcessingFrame: Bool = false
     private var frameSkipCount: Int = 0
     private let frameSkipThreshold: Int = 3 // Process every 3rd frame to reduce load
@@ -103,20 +103,10 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
         // Apply performance optimizations
         performanceManager.optimizeARView(view)
         
-        centralGestureManager = CentralGestureManager(arView: view)
+        // Disable motion blur for GPU performance gain, as recommended by Apple
+        view.renderOptions.insert(.disableMotionBlur)
         
-        // Configure session with proper management
-        sessionManager.configureSession(arView: view, preferVPS: false) { [weak self] success, error in
-            DispatchQueue.main.async {
-                if success {
-                    print("Object detection AR session configured successfully")
-                    self?.startDetectionTimer()
-                } else {
-                    print("Failed to configure AR session: \(error?.localizedDescription ?? "Unknown error")")
-                    self?.trackingStatus = "AR Setup Failed"
-                }
-            }
-        }
+        centralGestureManager = CentralGestureManager(arView: view)
         
         // Set up memory management notifications
         NotificationCenter.default.addObserver(
@@ -215,15 +205,17 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
             return
         }
         frameSkipCount = 0
-        
-        currentCamera = frame.camera
-        
+
+        // Copy what you need instead of retaining the ARCamera
+        let intrinsics = frame.camera.intrinsics
+        let transform = frame.camera.transform
+
         // Only capture new buffer if we're not currently processing and don't have a pending buffer
         if !isProcessingFrame && currentBuffer == nil {
-            // Use optimized frame management from session manager
-            if let optimizedFrame = sessionManager.getCurrentFrame() {
-                currentBuffer = optimizedFrame.capturedImage
-            }
+            currentBuffer = frame.capturedImage
+            // Store intrinsics separately if needed
+            lastIntrinsics = intrinsics
+            lastCameraTransform = transform
         }
     }
     
@@ -265,43 +257,43 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
     /// Processes the most recent captured frame and schedules detection.
     private func runDetectionTick() {
         guard let bufferToProcess = currentBuffer,
-              let camera = currentCamera,
-              !isProcessingFrame else { 
-            return 
+              let transform = lastCameraTransform,
+              !isProcessingFrame else {
+            return
         }
-        
+
         cleanupExpiredEntities()
-        
+
         isProcessingFrame = true
         currentBuffer = nil // Clear immediately to allow new frames
-        
+
         let orientation = CGImagePropertyOrientation.init(UIDevice.current.orientation)
-        
+
         detectObjects(in: bufferToProcess, orientation: orientation) { [weak self] results in
-            guard let self = self else { 
-                return 
+            guard let self = self else {
+                return
             }
-            
-            
+
+
             self.isProcessingFrame = false
-            
+
             guard let best = results.max(by: { $0.confidence < $1.confidence }),
                   best.confidence > baseConfidenceThreshold else {
                 self.updateDetectionStatus("No confident detection (\(results.count) candidates)")
                 self.consecutiveDetections.removeAll()
                 return
             }
-            
+
             let detectionCount = (self.consecutiveDetections[best.label] ?? 0) + 1
             self.consecutiveDetections[best.label] = detectionCount
-            
+
             for key in self.consecutiveDetections.keys where key != best.label {
                 self.consecutiveDetections.removeValue(forKey: key)
             }
-            
+
             if detectionCount >= self.stableDetectionRequired {
                 self.updateDetectionStatus("Stable detection: \(best.label) (\(Int(best.confidence * 100))%)")
-                self.placeAsset(for: best, orientation: orientation, camera: camera)
+                self.placeAsset(for: best, orientation: orientation, cameraTransform: transform)
                 self.consecutiveDetections.removeValue(forKey: best.label)
             } else {
                 self.updateDetectionStatus("Detecting \(best.label) (\(detectionCount)/\(self.stableDetectionRequired)) - \(Int(best.confidence * 100))%")
@@ -440,11 +432,11 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
     - Parameters:
       - detection: Detection to place.
       - orientation: Image orientation.
-      - camera: Current AR camera.
+      - cameraTransform: The transform of the camera at the time of capture.
     */
     private func placeAsset(for detection: DetectionResult,
                             orientation: CGImagePropertyOrientation,
-                            camera: ARCamera) {
+                            cameraTransform: simd_float4x4) {
         guard let arView = self.arView else { return }
         
         DispatchQueue.main.async { [weak self] in
@@ -709,7 +701,8 @@ final class ObjectDetectionManager: NSObject, ObservableObject, ARSessionDelegat
         
         isProcessingFrame = false
         currentBuffer = nil
-        currentCamera = nil
+        lastCameraTransform = nil
+        lastIntrinsics = nil
         
         centralGestureManager = nil
         
