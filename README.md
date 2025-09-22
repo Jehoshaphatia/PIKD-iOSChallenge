@@ -6,6 +6,12 @@ Built with **ARKit 6+**, **RealityKit 2**, **CoreML + Vision**, and **MapKit**.
 
 ---
 
+## Demo
+
+[Watch the demo on YouTube](https://youtube.com/shorts/Fxu3j2Z2p9E)
+
+---
+
 ## Features
 
 ### 1. Geospatial AR
